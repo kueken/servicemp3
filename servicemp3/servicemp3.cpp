@@ -768,7 +768,7 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-duration", 5LL * GST_SECOND, NULL);
 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-size", m_buffer_size, NULL);
 			if (m_sourceinfo.is_hls || m_sourceinfo.is_dash)
-				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495000LL), NULL);
+				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495LL), NULL);
 			/* URLs without a telling extension: recognise HLS/DASH/MSS when the demuxer gets plugged */
 			g_signal_connect(G_OBJECT(m_gst_playbin), "deep-element-added", G_CALLBACK(handleDeepElementAdded), this);
 		}
@@ -2650,13 +2650,11 @@ void eServiceMP3::handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElemen
 	{
 		g_atomic_int_set(&_this->m_adaptive_detected, 1);
 		/*
-		 * Same effective start bitrate hint as for URLs recognised by extension.
-		 * The playbin value (4495000 kbit/s) ends up clamped to the demuxer's
-		 * maximum of 4294967 kbit/s, so use that directly.
+		 * Same start bitrate hint (kbit/s) as for URLs recognised by extension.
 		 */
 		if (!_this->m_sourceinfo.is_hls && !_this->m_sourceinfo.is_dash
 			&& g_object_class_find_property(G_OBJECT_GET_CLASS(element), "connection-speed") != 0)
-			g_object_set(G_OBJECT(element), "connection-speed", (guint)4294967, NULL);
+			g_object_set(G_OBJECT(element), "connection-speed", (guint)4495, NULL);
 	}
 }
 
