@@ -2287,9 +2287,9 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
 				subtitleStreams_temp.push_back(subs);
 			}
 
-			bool hasChanges = m_audioStreams.size() != audioStreams_temp.size() || std::equal(m_audioStreams.begin(), m_audioStreams.end(), audioStreams_temp.begin());
+			bool hasChanges = m_audioStreams.size() != audioStreams_temp.size() || !std::equal(m_audioStreams.begin(), m_audioStreams.end(), audioStreams_temp.begin());
 			if (!hasChanges)
-				hasChanges = m_subtitleStreams.size() != subtitleStreams_temp.size() || std::equal(m_subtitleStreams.begin(), m_subtitleStreams.end(), subtitleStreams_temp.begin());
+				hasChanges = m_subtitleStreams.size() != subtitleStreams_temp.size() || !std::equal(m_subtitleStreams.begin(), m_subtitleStreams.end(), subtitleStreams_temp.begin());
 
 			if (hasChanges)
 			{
