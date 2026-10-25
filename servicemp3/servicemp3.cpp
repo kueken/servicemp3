@@ -445,9 +445,22 @@ void eServiceMP3InfoContainer::setDouble(double value)
 
 void eServiceMP3InfoContainer::setBuffer(GstBuffer *buffer)
 {
-	bufferValue = buffer;
-	gst_buffer_ref(bufferValue);
-	gst_buffer_map(bufferValue, &map, GST_MAP_READ);
+	if (bufferValue)
+	{
+		gst_buffer_unmap(bufferValue, &map);
+		gst_buffer_unref(bufferValue);
+		bufferValue = NULL;
+		bufferData = NULL;
+		bufferSize = 0;
+	}
+	if (!buffer)
+		return;
+	if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
+	{
+		eDebug("[eServiceMP3InfoContainer] setBuffer: gst_buffer_map failed");
+		return;
+	}
+	bufferValue = gst_buffer_ref(buffer);
 	bufferData = map.data;
 	bufferSize = map.size;
 }
@@ -1655,12 +1668,14 @@ ePtr<iServiceInfoContainer> eServiceMP3::getInfoObject(int w)
 	{
 		if (isBuffer)
 		{
+			/* GST_TAG_IMAGE, _PREVIEW_IMAGE and _ATTACHMENT hold a GstSample, not a GstBuffer */
 			const GValue *gv_buffer = gst_tag_list_get_value_index(m_stream_tags, tag, 0);
-			if ( gv_buffer )
+			if ( gv_buffer && GST_VALUE_HOLDS_SAMPLE(gv_buffer) )
 			{
-				GstBuffer *buffer;
-				buffer = gst_value_get_buffer (gv_buffer);
-				container->setBuffer(buffer);
+				GstSample *sample = gst_value_get_sample(gv_buffer);
+				GstBuffer *buffer = sample ? gst_sample_get_buffer(sample) : NULL;
+				if (buffer)
+					container->setBuffer(buffer);
 			}
 		}
 		else
