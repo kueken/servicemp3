@@ -767,7 +767,9 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 		else
 		{
 			m_subs_to_pull_handler_id = g_signal_connect (subsink, "new-buffer", G_CALLBACK (gstCBsubtitleAvail), this);
-			g_object_set (G_OBJECT (subsink), "caps", gst_caps_from_string("text/plain; text/x-plain; text/x-raw; text/x-pango-markup; subpicture/x-dvd; subpicture/x-dvb; subpicture/x-pgs"), NULL);
+			GstCaps *subcaps = gst_caps_from_string("text/plain; text/x-plain; text/x-raw; text/x-pango-markup; subpicture/x-dvd; subpicture/x-dvb; subpicture/x-pgs");
+			g_object_set (G_OBJECT (subsink), "caps", subcaps, NULL);
+			gst_caps_unref(subcaps);
 			g_object_set (G_OBJECT (m_gst_playbin), "text-sink", subsink, NULL);
 			g_object_set (G_OBJECT (m_gst_playbin), "current-text", m_currentSubtitleStream, NULL);
 		}
@@ -825,7 +827,7 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 eServiceMP3::~eServiceMP3()
 {
 	// disconnect subtitle callback
-	GstElement *subsink = gst_bin_get_by_name(GST_BIN(m_gst_playbin), "subtitle_sink");
+	GstElement *subsink = m_gst_playbin ? gst_bin_get_by_name(GST_BIN(m_gst_playbin), "subtitle_sink") : NULL;
 
 	if (subsink)
 	{
@@ -2022,6 +2024,8 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
 				{
 					m_paused = true;
 				}	break;
+				default:
+					break;
 				case GST_STATE_CHANGE_PAUSED_TO_READY:
 				{
 					if (audioSink)
@@ -2190,6 +2194,8 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
 				GstTagList *tags = NULL;
 				GstPad* pad = 0;
 				g_signal_emit_by_name (m_gst_playbin, "get-audio-pad", i, &pad);
+				if (!pad)
+					continue;
 				GstCaps* caps = gst_pad_get_current_caps(pad);
 				gst_object_unref(pad);
 				if (!caps)
@@ -2305,7 +2311,9 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
 					gst_structure_get (msgstruct, "detail", GST_TYPE_CAPS, &caps, NULL);
 					if (caps)
 					{
-						std::string codec = (const char*) gst_caps_to_string(caps);
+						gchar *caps_str = gst_caps_to_string(caps);
+						std::string codec = caps_str ? caps_str : "";
+						g_free(caps_str);
 						gchar *description = gst_missing_plugin_message_get_description(msg);
 						if ( description )
 						{
@@ -2495,6 +2503,7 @@ void eServiceMP3::HandleTocEntry(GstMessage *msg)
 				}
 			}
 		}
+		gst_toc_unref(toc); /* gst_message_parse_toc() returns a reference */
 		eDebug("[eServiceMP3] TOC entry from source %s processed", GST_MESSAGE_SRC_NAME(msg));
 	}
 	else
@@ -2739,7 +2748,9 @@ void eServiceMP3::gstTextpadHasCAPS_synced(GstPad *pad)
 	{
 		subtitleStream subs;
 
-		eDebug("[eServiceMP3] gstTextpadHasCAPS:: signal::caps = %s", gst_caps_to_string(caps));
+		gchar *caps_str = gst_caps_to_string(caps);
+		eDebug("[eServiceMP3] gstTextpadHasCAPS:: signal::caps = %s", caps_str ? caps_str : "(null)");
+		g_free(caps_str);
 //		eDebug("[eServiceMP3] gstGhostpadHasCAPS_synced %p %d", pad, m_subtitleStreams.size());
 
 		if (m_currentSubtitleStream >= 0 && m_currentSubtitleStream < (int)m_subtitleStreams.size())
@@ -2816,7 +2827,7 @@ void eServiceMP3::pullSubtitle(GstBuffer *buffer)
 				if (!line.empty() && line[line.length()-1] == '\n')
 					line.erase(line.length()-1);
 
-				eLog(6, "[eServiceMP3] got new text subtitle @ buf_pos = %lld ns (in pts=%lld), dur=%lld: '%s' ", buf_pos, buf_pos/11111, duration_ns, line.c_str());
+				eLog(6, "[eServiceMP3] got new text subtitle @ buf_pos = %lld ns (in pts=%lld), dur=%lld: '%s' ", (long long)buf_pos, (long long)(buf_pos/11111), (long long)duration_ns, line.c_str());
 
 				uint32_t start_ms = ((buf_pos / 1000000ULL) * convert_fps) + (delay / 90);
 				uint32_t end_ms = start_ms + (duration_ns / 1000000ULL);
@@ -2872,7 +2883,7 @@ void eServiceMP3::pushDVBSubtitles()
 		}
 		else
 		{
-			eDebug("[eServiceMP3] Delay early subtitle by %.03fs. Page stack size %d", diff / 1000.0f, m_dvb_subtitle_pages.size());
+			eDebug("[eServiceMP3] Delay early subtitle by %.03fs. Page stack size %zu", diff / 1000.0f, m_dvb_subtitle_pages.size());
 			m_dvb_subtitle_sync_timer->start(diff, 1);
 			break;
 		}

@@ -161,7 +161,9 @@ int eServiceMP3Record::doPrepare()
 
 		// set uridecodebin properties and notify
 		g_object_set(m_source, "uri", uri, NULL);
-		g_object_set(m_source, "caps", gst_caps_from_string("video/mpegts;video/x-flv;video/x-matroska;video/quicktime;video/x-msvideo;video/x-ms-asf;audio/mpeg;audio/x-flac;audio/x-ac3"), NULL);
+		GstCaps *stopcaps = gst_caps_from_string("video/mpegts;video/x-flv;video/x-matroska;video/quicktime;video/x-msvideo;video/x-ms-asf;audio/mpeg;audio/x-flac;audio/x-ac3");
+		g_object_set(m_source, "caps", stopcaps, NULL);
+		gst_caps_unref(stopcaps);
 		g_signal_connect(m_source, "notify::source", G_CALLBACK(handleUridecNotifySource), this);
 		g_signal_connect(m_source, "pad-added", G_CALLBACK(handlePadAdded), sink);
 		g_signal_connect(m_source, "autoplug-continue", G_CALLBACK(handleAutoPlugCont), this);
@@ -305,7 +307,6 @@ void eServiceMP3Record::gstBusCall(GstMessage *msg)
 			if(old_state == new_state)
 				break;
 
-			GstStateChange transition = (GstStateChange)GST_STATE_TRANSITION(old_state, new_state);
 			eDebug("[eMP3ServiceRecord] gstBusCall state transition %s -> %s", gst_element_state_get_name(old_state), gst_element_state_get_name(new_state));
 			break;
 		}
@@ -343,7 +344,9 @@ void eServiceMP3Record::gstBusCall(GstMessage *msg)
 					gst_structure_get (msgstruct, "detail", GST_TYPE_CAPS, &caps, NULL);
 					if (caps)
 					{
-						std::string codec = (const char*) gst_caps_to_string(caps);
+						gchar *caps_str = gst_caps_to_string(caps);
+						std::string codec = caps_str ? caps_str : "";
+						g_free(caps_str);
 						eDebug("[eServiceMP3Record] gstBusCall cannot record because of incompatible codecs %s", codec.c_str());
 						gst_caps_unref(caps);
 					}
@@ -494,7 +497,9 @@ void eServiceMP3Record::handlePadAdded(GstElement *element, GstPad *pad, gpointe
 
 gboolean eServiceMP3Record::handleAutoPlugCont(GstElement *bin, GstPad *pad, GstCaps *caps, gpointer user_data)
 {
-	eDebug("[eMP3ServiceRecord] handleAutoPlugCont found caps %s", gst_caps_to_string(caps));
+	gchar *caps_str = gst_caps_to_string(caps);
+	eDebug("[eMP3ServiceRecord] handleAutoPlugCont found caps %s", caps_str ? caps_str : "(null)");
+	g_free(caps_str);
 	return true;
 }
 
