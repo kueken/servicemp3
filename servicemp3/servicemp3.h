@@ -263,8 +263,9 @@ public:
 		bool is_video;
 		bool is_streaming;
 		bool is_hls;
+		bool is_dash;
 		sourceStream()
-			:audiotype(atUnknown), containertype(ctNone), is_video(FALSE), is_streaming(FALSE), is_hls(FALSE)
+			:audiotype(atUnknown), containertype(ctNone), is_video(FALSE), is_streaming(FALSE), is_hls(FALSE), is_dash(FALSE)
 		{
 		}
 	};
@@ -368,6 +369,10 @@ private:
 	void HandleTocEntry(GstMessage *msg);
 	static gint match_sinktype(const GValue *velement, const gchar *type);
 	static void handleElementAdded(GstBin *bin, GstElement *element, gpointer user_data);
+	static void handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElement *element, gpointer user_data);
+	/* HLS/DASH/MSS, detected from the URL extension or when the demuxer is plugged */
+	bool isAdaptiveStream() const { return m_sourceinfo.is_hls || m_sourceinfo.is_dash || g_atomic_int_get(&m_adaptive_detected); }
+	gint m_adaptive_detected;
 
 	struct subtitle_page_t
 	{

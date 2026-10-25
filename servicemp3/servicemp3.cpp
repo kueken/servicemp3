@@ -63,6 +63,27 @@ typedef enum
 	GST_PLAY_FLAG_FORCE_FILTERS = (1 << 11),
 } GstPlayFlags;
 
+/*
+ * Return the file extension (including the dot) used to classify a source.
+ * For URLs a query string or fragment is ignored, so that
+ * "http://host/live/stream.m3u8?token=abc" is recognised as ".m3u8".
+ */
+static std::string getTypeExtension(const char *filename)
+{
+	std::string path(filename);
+	if (path.find("://") != std::string::npos)
+	{
+		size_t q = path.find_first_of("?#");
+		if (q != std::string::npos)
+			path.erase(q);
+	}
+	size_t slash = path.find_last_of('/');
+	size_t dot = path.find_last_of('.');
+	if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
+		return "";
+	return path.substr(dot);
+}
+
 // eServiceFactoryMP3
 
 /*
@@ -455,6 +476,7 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 	m_buffer_size = 5 * 1024 * 1024;
 	m_ignore_buffering_messages = 0;
 	m_is_live = false;
+	m_adaptive_detected = 0;
 	m_use_prefillbuffer = false;
 	m_paused = false;
 	m_seek_paused = false;
@@ -572,75 +594,80 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 	if (!ext)
 		ext = filename + strlen(filename);
 
+	std::string ext_type_str = getTypeExtension(filename);
+	const char *ext_type = ext_type_str.c_str();
+
 	m_sourceinfo.is_video = FALSE;
 	m_sourceinfo.audiotype = atUnknown;
-	if (strcasecmp(ext, ".mpeg") == 0 || strcasecmp(ext, ".mpe") == 0 || strcasecmp(ext, ".mpg") == 0 || strcasecmp(ext, ".vob") == 0 || strcasecmp(ext, ".bin") == 0)
+	if (strcasecmp(ext_type, ".mpeg") == 0 || strcasecmp(ext_type, ".mpe") == 0 || strcasecmp(ext_type, ".mpg") == 0 || strcasecmp(ext_type, ".vob") == 0 || strcasecmp(ext_type, ".bin") == 0)
 	{
 		m_sourceinfo.containertype = ctMPEGPS;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".ts") == 0)
+	else if (strcasecmp(ext_type, ".ts") == 0)
 	{
 		m_sourceinfo.containertype = ctMPEGTS;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".mkv") == 0)
+	else if (strcasecmp(ext_type, ".mkv") == 0)
 	{
 		m_sourceinfo.containertype = ctMKV;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".ogm") == 0 || strcasecmp(ext, ".ogv") == 0)
+	else if (strcasecmp(ext_type, ".ogm") == 0 || strcasecmp(ext_type, ".ogv") == 0)
 	{
 		m_sourceinfo.containertype = ctOGG;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".avi") == 0 || strcasecmp(ext, ".divx") == 0)
+	else if (strcasecmp(ext_type, ".avi") == 0 || strcasecmp(ext_type, ".divx") == 0)
 	{
 		m_sourceinfo.containertype = ctAVI;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".mp4") == 0 || strcasecmp(ext, ".mov") == 0 || strcasecmp(ext, ".m4v") == 0 || strcasecmp(ext, ".3gp") == 0 || strcasecmp(ext, ".3g2") == 0)
+	else if (strcasecmp(ext_type, ".mp4") == 0 || strcasecmp(ext_type, ".mov") == 0 || strcasecmp(ext_type, ".m4v") == 0 || strcasecmp(ext_type, ".3gp") == 0 || strcasecmp(ext_type, ".3g2") == 0)
 	{
 		m_sourceinfo.containertype = ctMP4;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".asf") == 0 || strcasecmp(ext, ".wmv") == 0)
+	else if (strcasecmp(ext_type, ".asf") == 0 || strcasecmp(ext_type, ".wmv") == 0)
 	{
 		m_sourceinfo.containertype = ctASF;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".webm") == 0)
+	else if (strcasecmp(ext_type, ".webm") == 0)
 	{
 		m_sourceinfo.containertype = ctWEBM;
 		m_sourceinfo.is_video = TRUE;
 	}
-	else if (strcasecmp(ext, ".m4a") == 0 || strcasecmp(ext, ".alac") == 0)
+	else if (strcasecmp(ext_type, ".m4a") == 0 || strcasecmp(ext_type, ".alac") == 0)
 	{
 		m_sourceinfo.containertype = ctMP4;
 		m_sourceinfo.audiotype = atAAC;
 	}
-	else if ( strcasecmp(ext, ".dra") == 0 )
+	else if ( strcasecmp(ext_type, ".dra") == 0 )
 	{
 		m_sourceinfo.containertype = ctDRA;
 		m_sourceinfo.audiotype = atDRA;
 	}
-	else if (strcasecmp(ext, ".m3u8") == 0)
+	else if (strcasecmp(ext_type, ".m3u8") == 0)
 		m_sourceinfo.is_hls = TRUE;
-	else if (strcasecmp(ext, ".mp3") == 0)
+	else if (strcasecmp(ext_type, ".mpd") == 0)
+		m_sourceinfo.is_dash = TRUE;
+	else if (strcasecmp(ext_type, ".mp3") == 0)
 		m_sourceinfo.audiotype = atMP3;
-	else if (strcasecmp(ext, ".wma") == 0)
+	else if (strcasecmp(ext_type, ".wma") == 0)
 		m_sourceinfo.audiotype = atWMA;
-	else if (strcasecmp(ext, ".wav") == 0 || strcasecmp(ext, ".wave") == 0 || strcasecmp(ext, ".wv") == 0)
+	else if (strcasecmp(ext_type, ".wav") == 0 || strcasecmp(ext_type, ".wave") == 0 || strcasecmp(ext_type, ".wv") == 0)
 		m_sourceinfo.audiotype = atPCM;
-	else if (strcasecmp(ext, ".dts") == 0)
+	else if (strcasecmp(ext_type, ".dts") == 0)
 		m_sourceinfo.audiotype = atDTS;
-	else if (strcasecmp(ext, ".flac") == 0)
+	else if (strcasecmp(ext_type, ".flac") == 0)
 		m_sourceinfo.audiotype = atFLAC;
-	else if (strcasecmp(ext, ".ac3") == 0)
+	else if (strcasecmp(ext_type, ".ac3") == 0)
 		m_sourceinfo.audiotype = atAC3;
-	else if (strcasecmp(ext, ".cda") == 0)
+	else if (strcasecmp(ext_type, ".cda") == 0)
 		m_sourceinfo.containertype = ctCDA;
-	if (strcasecmp(ext, ".dat") == 0)
+	if (strcasecmp(ext_type, ".dat") == 0)
 	{
 		m_sourceinfo.containertype = ctVCD;
 		m_sourceinfo.is_video = TRUE;
@@ -727,8 +754,10 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
 			/* increase the default 2 second / 2 MB buffer limitations to 5s / 5MB */
 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-duration", 5LL * GST_SECOND, NULL);
 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-size", m_buffer_size, NULL);
-			if (m_sourceinfo.is_hls)
+			if (m_sourceinfo.is_hls || m_sourceinfo.is_dash)
 				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495000LL), NULL);
+			/* URLs without a telling extension: recognise HLS/DASH/MSS when the demuxer gets plugged */
+			g_signal_connect(G_OBJECT(m_gst_playbin), "deep-element-added", G_CALLBACK(handleDeepElementAdded), this);
 		}
 		g_object_set (G_OBJECT (m_gst_playbin), "flags", flags, NULL);
 		g_object_set (G_OBJECT (m_gst_playbin), "uri", uri, NULL);
@@ -2349,7 +2378,7 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
 				 * (in which case the sink will not produce data while paused, so we won't
 				 * recover from an empty buffer)
 				 */
-				if (m_use_prefillbuffer && !m_is_live && !m_sourceinfo.is_hls && --m_ignore_buffering_messages <= 0)
+				if (m_use_prefillbuffer && !m_is_live && !isAdaptiveStream() && --m_ignore_buffering_messages <= 0)
 				{
 					if (m_bufferInfo.bufferPercent == 100)
 					{
@@ -2580,6 +2609,30 @@ void eServiceMP3::handleElementAdded(GstBin *bin, GstElement *element, gpointer 
 				g_signal_connect(element, "element-added", G_CALLBACK(handleElementAdded), user_data);
 		}
 		g_free(elementname);
+	}
+}
+
+void eServiceMP3::handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElement *element, gpointer user_data)
+{
+	/* runs in a streaming thread: only atomics and thread safe GObject calls, no logging */
+	eServiceMP3 *_this = (eServiceMP3*)user_data;
+	GstElementFactory *factory = element ? gst_element_get_factory(element) : NULL;
+	if (!_this || !factory)
+		return;
+	const gchar *name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+	if (!name)
+		return;
+	if (g_str_has_prefix(name, "hlsdemux") || g_str_has_prefix(name, "dashdemux") || g_str_has_prefix(name, "mssdemux"))
+	{
+		g_atomic_int_set(&_this->m_adaptive_detected, 1);
+		/*
+		 * Same effective start bitrate hint as for URLs recognised by extension.
+		 * The playbin value (4495000 kbit/s) ends up clamped to the demuxer's
+		 * maximum of 4294967 kbit/s, so use that directly.
+		 */
+		if (!_this->m_sourceinfo.is_hls && !_this->m_sourceinfo.is_dash
+			&& g_object_class_find_property(G_OBJECT_GET_CLASS(element), "connection-speed") != 0)
+			g_object_set(G_OBJECT(element), "connection-speed", (guint)4294967, NULL);
 	}
 }
 
