@@ -1,0 +1,54 @@
+diff -urN a/gstreamer/gstreamer1.0-plugins-bad_1.22%.bbappend b/gstreamer/gstreamer1.0-plugins-bad_1.22%.bbappend
+--- a/gstreamer/gstreamer1.0-plugins-bad_1.22%.bbappend
++++ b/gstreamer/gstreamer1.0-plugins-bad_1.22%.bbappend
+@@ -11,8 +11,11 @@
+                   file://CVE-2025-3887-2.patch \
+                   file://0005-v4l2codecs-Always-chain-up-to-parent-decide_allocati.patch \
+ "
+-PACKAGECONFIG = "${GSTREAMER_ORC} bz2 closedcaption curl dash dtls faac faad hls openssl opusparse \
+-                 rsvg rtmp sbc smoothstreaming sndfile ttml uvch264 webp \
+-"
++# servicemp3 uses playbin (decodebin2). Verified with GStreamer 1.26: the classic
++# hlsdemux/dashdemux/mssdemux (hls, dash, smoothstreaming) are REQUIRED for HLS/DASH/MSS,
++# souphttpsrc (good/soup) + mpegtsdemux (always built) for HLS-TS. openssl = HLS AES-128.
++# Dropped (not used by playbin/dvbmediasink playback): bz2 closedcaption curl dtls faac rsvg
++# sbc sndfile ttml uvch264 webp. faad kept for AAC profiles other than LC, rtmp for rtmp://.
++PACKAGECONFIG = "${GSTREAMER_ORC} dash faad hls openssl opusparse rtmp smoothstreaming"
+ 
+ EXTRA_OEMESON:remove = "-Dkate=disabled"
+diff -urN a/gstreamer/gstreamer1.0-plugins-base_1.22%.bbappend b/gstreamer/gstreamer1.0-plugins-base_1.22%.bbappend
+--- a/gstreamer/gstreamer1.0-plugins-base_1.22%.bbappend
++++ b/gstreamer/gstreamer1.0-plugins-base_1.22%.bbappend
+@@ -24,4 +24,7 @@
+                   file://CVE-2025-47808.patch \
+ "
+ 
+-PACKAGECONFIG = "${GSTREAMER_ORC} alsa jpeg ogg opus pango png theora vorbis"
++# pango dropped: with text-sink=subsink (servicemp3) playbin needs no text overlay.
++# jpeg/png only toggled the GL plugin options (gl-jpeg/gl-png). alsa: keep if any box
++# plays PCM through ALSA (dvbaudiosink handles PCM itself when built with HAVE_PCM).
++PACKAGECONFIG = "${GSTREAMER_ORC} alsa ogg opus theora vorbis"
+diff -urN a/gstreamer/gstreamer1.0-plugins-good_1.22%.bbappend b/gstreamer/gstreamer1.0-plugins-good_1.22%.bbappend
+--- a/gstreamer/gstreamer1.0-plugins-good_1.22%.bbappend
++++ b/gstreamer/gstreamer1.0-plugins-good_1.22%.bbappend
+@@ -46,9 +46,17 @@
+                   file://CVE-2025-47219.patch \
+ "
+ 
+-PACKAGECONFIG = "${GSTREAMER_ORC} amrnb amrwb bz2 cairo flac gdk-pixbuf gudev jpeg lame libpng \
+-                 mpg123 soup2 speex taglib v4l2 vpx wavpack \
+-"
++# adaptivedemux2 (hlsdemux2/dashdemux2/mssdemux2) can never work under playbin: it needs a
++# streams-aware parent (decodebin3/playbin3) and fails with "Element requires a streams-aware
++# context"; GStreamer then falls back to the classic demuxers from -bad. Not building it saves
++# a large plugin (2nd largest of -good in an x86 test build). Revert if servicemp3 moves to playbin3.
++EXTRA_OEMESON:append = " -Dadaptivedemux2=disabled"
++
++# Dropped: cairo gdk-pixbuf gudev lame libpng speex taglib v4l2 (encoders, image/camera/V4L2
++# plugins - not used by dvbmediasink based playback). Kept, depending on DVBMEDIASINK_CONFIG:
++# amrnb/amrwb (sink has AMR), jpeg (MJPEG), mpg123 (MP3 only native with HAVE_MP3), vpx (VP8/VP9
++# only native with HAVE_VB8/VB9), flac, wavpack, bz2 (bz2-compressed Matroska tracks).
++PACKAGECONFIG = "${GSTREAMER_ORC} amrnb amrwb bz2 flac jpeg mpg123 soup2 vpx wavpack"
+ 
+ PACKAGECONFIG[amrnb] = "-Damrnb=enabled,-Damrnb=disabled,opencore-amr"
+ PACKAGECONFIG[amrwb] = "-Damrwbdec=enabled,-Damrwbdec=disabled,opencore-amr"

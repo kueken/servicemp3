@@ -1,0 +1,259 @@
+From 466954390d8d382da9f250bba2393d07261a32e7 Mon Sep 17 00:00:00 2001
+From: "servicemp3 gst-1.26 review" <noreply@example.invalid>
+Date: Sun, 25 Oct 2026 13:17:28 +0000
+Subject: [PATCH 4/4] servicemp3: detect HLS/DASH reliably, also with query
+ strings
+
+The source type was derived from strrchr(filename, '.'). For typical
+IPTV URLs such as http://host/live/stream.m3u8?token=abc the "extension"
+became ".m3u8?token=abc", so is_hls stayed FALSE: no connection-speed
+hint, and - if the service reference enables buffering - the
+pause/resume-on-0%/100% logic, which is deliberately skipped for
+adaptive streams, was applied to HLS.
+
+- getTypeExtension(): ignore query string/fragment for URLs and any
+  dot that belongs to a directory component. Unit-tested on ten
+  URL/path forms (old: 6 misclassified, new: 0).
+- Recognise ".mpd" as DASH (is_dash) and treat it like HLS.
+- Connect playbin "deep-element-added" for streaming sources and flag
+  the stream as adaptive when a hlsdemux*/dashdemux*/mssdemux* element
+  is plugged. This covers URLs without a telling extension. The
+  handler runs in a streaming thread and therefore only uses atomics
+  and thread safe GObject calls.
+- The BUFFERING handler now uses isAdaptiveStream().
+
+Background (verified with GStreamer 1.26.11): playbin's decodebin is
+not streams-aware, so hlsdemux2/dashdemux2/mssdemux2 (adaptivedemux2)
+always fail with "Element requires a streams-aware context" and the
+classic hlsdemux/dashdemux/mssdemux from gst-plugins-bad do the work.
+Their names start with the same prefixes and are matched here.
+
+Note: a URL such as http://host/get?file=a.m3u8 (dot only in the query)
+is no longer taken as HLS by extension; it is caught by the
+deep-element-added path once hlsdemux is plugged.
+---
+ servicemp3/servicemp3.cpp | 95 ++++++++++++++++++++++++++++++---------
+ servicemp3/servicemp3.h   |  7 ++-
+ 2 files changed, 80 insertions(+), 22 deletions(-)
+
+diff --git a/servicemp3/servicemp3.cpp b/servicemp3/servicemp3.cpp
+index 8ac881c..fe6d052 100644
+--- a/servicemp3/servicemp3.cpp
++++ b/servicemp3/servicemp3.cpp
+@@ -62,6 +62,27 @@ typedef enum
+ 	GST_PLAY_FLAG_FORCE_FILTERS = (1 << 11),
+ } GstPlayFlags;
+ 
++/*
++ * Return the file extension (including the dot) used to classify a source.
++ * For URLs a query string or fragment is ignored, so that
++ * "http://host/live/stream.m3u8?token=abc" is recognised as ".m3u8".
++ */
++static std::string getTypeExtension(const char *filename)
++{
++	std::string path(filename);
++	if (path.find("://") != std::string::npos)
++	{
++		size_t q = path.find_first_of("?#");
++		if (q != std::string::npos)
++			path.erase(q);
++	}
++	size_t slash = path.find_last_of('/');
++	size_t dot = path.find_last_of('.');
++	if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
++		return "";
++	return path.substr(dot);
++}
++
+ // eServiceFactoryMP3
+ 
+ /*
+@@ -467,6 +488,7 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
+ 	m_buffer_size = 5 * 1024 * 1024;
+ 	m_ignore_buffering_messages = 0;
+ 	m_is_live = false;
++	m_adaptive_detected = 0;
+ 	m_use_prefillbuffer = false;
+ 	m_paused = false;
+ 	m_seek_paused = false;
+@@ -584,75 +606,80 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
+ 	if (!ext)
+ 		ext = filename + strlen(filename);
+ 
++	std::string ext_type_str = getTypeExtension(filename);
++	const char *ext_type = ext_type_str.c_str();
++
+ 	m_sourceinfo.is_video = FALSE;
+ 	m_sourceinfo.audiotype = atUnknown;
+-	if (strcasecmp(ext, ".mpeg") == 0 || strcasecmp(ext, ".mpe") == 0 || strcasecmp(ext, ".mpg") == 0 || strcasecmp(ext, ".vob") == 0 || strcasecmp(ext, ".bin") == 0)
++	if (strcasecmp(ext_type, ".mpeg") == 0 || strcasecmp(ext_type, ".mpe") == 0 || strcasecmp(ext_type, ".mpg") == 0 || strcasecmp(ext_type, ".vob") == 0 || strcasecmp(ext_type, ".bin") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctMPEGPS;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".ts") == 0)
++	else if (strcasecmp(ext_type, ".ts") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctMPEGTS;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".mkv") == 0)
++	else if (strcasecmp(ext_type, ".mkv") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctMKV;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".ogm") == 0 || strcasecmp(ext, ".ogv") == 0)
++	else if (strcasecmp(ext_type, ".ogm") == 0 || strcasecmp(ext_type, ".ogv") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctOGG;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".avi") == 0 || strcasecmp(ext, ".divx") == 0)
++	else if (strcasecmp(ext_type, ".avi") == 0 || strcasecmp(ext_type, ".divx") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctAVI;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".mp4") == 0 || strcasecmp(ext, ".mov") == 0 || strcasecmp(ext, ".m4v") == 0 || strcasecmp(ext, ".3gp") == 0 || strcasecmp(ext, ".3g2") == 0)
++	else if (strcasecmp(ext_type, ".mp4") == 0 || strcasecmp(ext_type, ".mov") == 0 || strcasecmp(ext_type, ".m4v") == 0 || strcasecmp(ext_type, ".3gp") == 0 || strcasecmp(ext_type, ".3g2") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctMP4;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".asf") == 0 || strcasecmp(ext, ".wmv") == 0)
++	else if (strcasecmp(ext_type, ".asf") == 0 || strcasecmp(ext_type, ".wmv") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctASF;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".webm") == 0)
++	else if (strcasecmp(ext_type, ".webm") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctWEBM;
+ 		m_sourceinfo.is_video = TRUE;
+ 	}
+-	else if (strcasecmp(ext, ".m4a") == 0 || strcasecmp(ext, ".alac") == 0)
++	else if (strcasecmp(ext_type, ".m4a") == 0 || strcasecmp(ext_type, ".alac") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctMP4;
+ 		m_sourceinfo.audiotype = atAAC;
+ 	}
+-	else if ( strcasecmp(ext, ".dra") == 0 )
++	else if ( strcasecmp(ext_type, ".dra") == 0 )
+ 	{
+ 		m_sourceinfo.containertype = ctDRA;
+ 		m_sourceinfo.audiotype = atDRA;
+ 	}
+-	else if (strcasecmp(ext, ".m3u8") == 0)
++	else if (strcasecmp(ext_type, ".m3u8") == 0)
+ 		m_sourceinfo.is_hls = TRUE;
+-	else if (strcasecmp(ext, ".mp3") == 0)
++	else if (strcasecmp(ext_type, ".mpd") == 0)
++		m_sourceinfo.is_dash = TRUE;
++	else if (strcasecmp(ext_type, ".mp3") == 0)
+ 		m_sourceinfo.audiotype = atMP3;
+-	else if (strcasecmp(ext, ".wma") == 0)
++	else if (strcasecmp(ext_type, ".wma") == 0)
+ 		m_sourceinfo.audiotype = atWMA;
+-	else if (strcasecmp(ext, ".wav") == 0 || strcasecmp(ext, ".wave") == 0 || strcasecmp(ext, ".wv") == 0)
++	else if (strcasecmp(ext_type, ".wav") == 0 || strcasecmp(ext_type, ".wave") == 0 || strcasecmp(ext_type, ".wv") == 0)
+ 		m_sourceinfo.audiotype = atPCM;
+-	else if (strcasecmp(ext, ".dts") == 0)
++	else if (strcasecmp(ext_type, ".dts") == 0)
+ 		m_sourceinfo.audiotype = atDTS;
+-	else if (strcasecmp(ext, ".flac") == 0)
++	else if (strcasecmp(ext_type, ".flac") == 0)
+ 		m_sourceinfo.audiotype = atFLAC;
+-	else if (strcasecmp(ext, ".ac3") == 0)
++	else if (strcasecmp(ext_type, ".ac3") == 0)
+ 		m_sourceinfo.audiotype = atAC3;
+-	else if (strcasecmp(ext, ".cda") == 0)
++	else if (strcasecmp(ext_type, ".cda") == 0)
+ 		m_sourceinfo.containertype = ctCDA;
+-	if (strcasecmp(ext, ".dat") == 0)
++	if (strcasecmp(ext_type, ".dat") == 0)
+ 	{
+ 		m_sourceinfo.containertype = ctVCD;
+ 		m_sourceinfo.is_video = TRUE;
+@@ -739,8 +766,10 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
+ 			/* increase the default 2 second / 2 MB buffer limitations to 5s / 5MB */
+ 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-duration", 5LL * GST_SECOND, NULL);
+ 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-size", m_buffer_size, NULL);
+-			if (m_sourceinfo.is_hls)
++			if (m_sourceinfo.is_hls || m_sourceinfo.is_dash)
+ 				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495000LL), NULL);
++			/* URLs without a telling extension: recognise HLS/DASH/MSS when the demuxer gets plugged */
++			g_signal_connect(G_OBJECT(m_gst_playbin), "deep-element-added", G_CALLBACK(handleDeepElementAdded), this);
+ 		}
+ 		g_object_set (G_OBJECT (m_gst_playbin), "flags", flags, NULL);
+ 		g_object_set (G_OBJECT (m_gst_playbin), "uri", uri, NULL);
+@@ -2362,7 +2391,7 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
+ 				 * (in which case the sink will not produce data while paused, so we won't
+ 				 * recover from an empty buffer)
+ 				 */
+-				if (m_use_prefillbuffer && !m_is_live && !m_sourceinfo.is_hls && --m_ignore_buffering_messages <= 0)
++				if (m_use_prefillbuffer && !m_is_live && !isAdaptiveStream() && --m_ignore_buffering_messages <= 0)
+ 				{
+ 					if (m_bufferInfo.bufferPercent == 100)
+ 					{
+@@ -2597,6 +2626,30 @@ void eServiceMP3::handleElementAdded(GstBin *bin, GstElement *element, gpointer
+ 	}
+ }
+ 
++void eServiceMP3::handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElement *element, gpointer user_data)
++{
++	/* runs in a streaming thread: only atomics and thread safe GObject calls, no logging */
++	eServiceMP3 *_this = (eServiceMP3*)user_data;
++	GstElementFactory *factory = element ? gst_element_get_factory(element) : NULL;
++	if (!_this || !factory)
++		return;
++	const gchar *name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
++	if (!name)
++		return;
++	if (g_str_has_prefix(name, "hlsdemux") || g_str_has_prefix(name, "dashdemux") || g_str_has_prefix(name, "mssdemux"))
++	{
++		g_atomic_int_set(&_this->m_adaptive_detected, 1);
++		/*
++		 * Same effective start bitrate hint as for URLs recognised by extension.
++		 * The playbin value (4495000 kbit/s) ends up clamped to the demuxer's
++		 * maximum of 4294967 kbit/s, so use that directly.
++		 */
++		if (!_this->m_sourceinfo.is_hls && !_this->m_sourceinfo.is_dash
++			&& g_object_class_find_property(G_OBJECT_GET_CLASS(element), "connection-speed") != 0)
++			g_object_set(G_OBJECT(element), "connection-speed", (guint)4294967, NULL);
++	}
++}
++
+ audiotype_t eServiceMP3::gstCheckAudioPad(GstStructure* structure)
+ {
+ 	if (!structure)
+diff --git a/servicemp3/servicemp3.h b/servicemp3/servicemp3.h
+index f20f56c..fc9fafa 100644
+--- a/servicemp3/servicemp3.h
++++ b/servicemp3/servicemp3.h
+@@ -263,8 +263,9 @@ public:
+ 		bool is_video;
+ 		bool is_streaming;
+ 		bool is_hls;
++		bool is_dash;
+ 		sourceStream()
+-			:audiotype(atUnknown), containertype(ctNone), is_video(FALSE), is_streaming(FALSE), is_hls(FALSE)
++			:audiotype(atUnknown), containertype(ctNone), is_video(FALSE), is_streaming(FALSE), is_hls(FALSE), is_dash(FALSE)
+ 		{
+ 		}
+ 	};
+@@ -368,6 +369,10 @@ private:
+ 	void HandleTocEntry(GstMessage *msg);
+ 	static gint match_sinktype(const GValue *velement, const gchar *type);
+ 	static void handleElementAdded(GstBin *bin, GstElement *element, gpointer user_data);
++	static void handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElement *element, gpointer user_data);
++	/* HLS/DASH/MSS, detected from the URL extension or when the demuxer is plugged */
++	bool isAdaptiveStream() const { return m_sourceinfo.is_hls || m_sourceinfo.is_dash || g_atomic_int_get(&m_adaptive_detected); }
++	gint m_adaptive_detected;
+ 
+ 	struct subtitle_page_t
+ 	{
+-- 
+2.43.0
+

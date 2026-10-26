@@ -1,0 +1,55 @@
+From b93a0b2be8283750b7d9fa3f7405b12f8bdd3e63 Mon Sep 17 00:00:00 2001
+From: "servicemp3 gst-1.26 review" <noreply@example.invalid>
+Date: Sun, 25 Oct 2026 13:17:28 +0000
+Subject: [PATCH] servicemp3: [OPTIONAL] use 4495 kbit/s as adaptive start
+ bitrate
+
+playbin's "connection-speed" is specified in kbit/s and is passed on to
+hlsdemux/dashdemux/mssdemux. The existing value 4495000 equals 4.5
+Gbit/s and is clamped by the demuxers to their maximum (4294967), i.e.
+the highest variant is always selected. Measured with GStreamer 1.26.11:
+
+  playbin connection-speed=4495    -> hlsdemux connection-speed = 4495
+  playbin connection-speed=4495000 -> hlsdemux connection-speed = 4294967
+
+If 4.5 Mbit/s was the intended start hint (the value looks like
+4495 kbit/s with three extra zeros), this makes it effective. It
+changes which variant is picked first on multi-bitrate streams, so it
+is kept separate: apply only after testing on a box. Do not apply if
+"always the best variant" is the wanted behaviour.
+---
+ servicemp3/servicemp3.cpp | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/servicemp3/servicemp3.cpp b/servicemp3/servicemp3.cpp
+index fe6d052..bf03080 100644
+--- a/servicemp3/servicemp3.cpp
++++ b/servicemp3/servicemp3.cpp
+@@ -767,7 +767,7 @@ eServiceMP3::eServiceMP3(eServiceReference ref):
+ 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-duration", 5LL * GST_SECOND, NULL);
+ 			g_object_set(G_OBJECT(m_gst_playbin), "buffer-size", m_buffer_size, NULL);
+ 			if (m_sourceinfo.is_hls || m_sourceinfo.is_dash)
+-				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495000LL), NULL);
++				g_object_set(G_OBJECT(m_gst_playbin), "connection-speed", (guint64)(4495LL), NULL);
+ 			/* URLs without a telling extension: recognise HLS/DASH/MSS when the demuxer gets plugged */
+ 			g_signal_connect(G_OBJECT(m_gst_playbin), "deep-element-added", G_CALLBACK(handleDeepElementAdded), this);
+ 		}
+@@ -2640,13 +2640,11 @@ void eServiceMP3::handleDeepElementAdded(GstBin *bin, GstBin *sub_bin, GstElemen
+ 	{
+ 		g_atomic_int_set(&_this->m_adaptive_detected, 1);
+ 		/*
+-		 * Same effective start bitrate hint as for URLs recognised by extension.
+-		 * The playbin value (4495000 kbit/s) ends up clamped to the demuxer's
+-		 * maximum of 4294967 kbit/s, so use that directly.
++		 * Same start bitrate hint (kbit/s) as for URLs recognised by extension.
+ 		 */
+ 		if (!_this->m_sourceinfo.is_hls && !_this->m_sourceinfo.is_dash
+ 			&& g_object_class_find_property(G_OBJECT_GET_CLASS(element), "connection-speed") != 0)
+-			g_object_set(G_OBJECT(element), "connection-speed", (guint)4294967, NULL);
++			g_object_set(G_OBJECT(element), "connection-speed", (guint)4495, NULL);
+ 	}
+ }
+ 
+-- 
+2.43.0
+

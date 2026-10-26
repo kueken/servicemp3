@@ -1,0 +1,75 @@
+From 5af95b1ceb12d670f3c113507489b854b3f69ad0 Mon Sep 17 00:00:00 2001
+From: "servicemp3 gst-1.26 review" <noreply@example.invalid>
+Date: Sun, 25 Oct 2026 13:13:59 +0000
+Subject: [PATCH 2/4] servicemp3: read image/attachment tags as GstSample
+
+getInfoObject() fetched GST_TAG_IMAGE, GST_TAG_PREVIEW_IMAGE and
+GST_TAG_ATTACHMENT with gst_value_get_buffer(). In GStreamer 1.x these
+tags hold a GstSample. The call returns the sample pointer typed as
+GstBuffer; gst_buffer_map() on it fails ("assertion GST_IS_BUFFER
+failed") and bufferData/bufferSize stayed uninitialised and were handed
+on to the Python side.
+
+Use gst_value_get_sample()/gst_sample_get_buffer() and make
+eServiceMP3InfoContainer::setBuffer() robust: only keep the buffer if
+the mapping succeeded, release a previously held buffer first.
+
+Verified against GStreamer 1.26.11: the three tags are GstSample;
+gst_buffer_map() on the old pointer fails, the new path maps the
+payload correctly with no GLib criticals.
+---
+ servicemp3/servicemp3.cpp | 29 ++++++++++++++++++++++-------
+ 1 file changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/servicemp3/servicemp3.cpp b/servicemp3/servicemp3.cpp
+index 0c2a92a..8bb58d8 100644
+--- a/servicemp3/servicemp3.cpp
++++ b/servicemp3/servicemp3.cpp
+@@ -423,9 +423,22 @@ void eServiceMP3InfoContainer::setDouble(double value)
+ 
+ void eServiceMP3InfoContainer::setBuffer(GstBuffer *buffer)
+ {
+-	bufferValue = buffer;
+-	gst_buffer_ref(bufferValue);
+-	gst_buffer_map(bufferValue, &map, GST_MAP_READ);
++	if (bufferValue)
++	{
++		gst_buffer_unmap(bufferValue, &map);
++		gst_buffer_unref(bufferValue);
++		bufferValue = NULL;
++		bufferData = NULL;
++		bufferSize = 0;
++	}
++	if (!buffer)
++		return;
++	if (!gst_buffer_map(buffer, &map, GST_MAP_READ))
++	{
++		eDebug("[eServiceMP3InfoContainer] setBuffer: gst_buffer_map failed");
++		return;
++	}
++	bufferValue = gst_buffer_ref(buffer);
+ 	bufferData = map.data;
+ 	bufferSize = map.size;
+ }
+@@ -1623,12 +1636,14 @@ ePtr<iServiceInfoContainer> eServiceMP3::getInfoObject(int w)
+ 	{
+ 		if (isBuffer)
+ 		{
++			/* GST_TAG_IMAGE, _PREVIEW_IMAGE and _ATTACHMENT hold a GstSample, not a GstBuffer */
+ 			const GValue *gv_buffer = gst_tag_list_get_value_index(m_stream_tags, tag, 0);
+-			if ( gv_buffer )
++			if ( gv_buffer && GST_VALUE_HOLDS_SAMPLE(gv_buffer) )
+ 			{
+-				GstBuffer *buffer;
+-				buffer = gst_value_get_buffer (gv_buffer);
+-				container->setBuffer(buffer);
++				GstSample *sample = gst_value_get_sample(gv_buffer);
++				GstBuffer *buffer = sample ? gst_sample_get_buffer(sample) : NULL;
++				if (buffer)
++					container->setBuffer(buffer);
+ 			}
+ 		}
+ 		else
+-- 
+2.43.0
+

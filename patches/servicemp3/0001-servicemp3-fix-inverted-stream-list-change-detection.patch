@@ -1,0 +1,44 @@
+From 93fc93bf789c3b94faf5efff69e6073290fe505e Mon Sep 17 00:00:00 2001
+From: "servicemp3 gst-1.26 review" <noreply@example.invalid>
+Date: Sun, 25 Oct 2026 13:13:50 +0000
+Subject: [PATCH 1/4] servicemp3: fix inverted stream-list change detection
+
+In the ASYNC_DONE handler the check whether the audio/subtitle stream
+lists changed used std::equal() without negation:
+
+  hasChanges = size differs || std::equal(old, new)
+
+so an unchanged list was reported as changed (re-enumeration and a
+spurious evUpdatedInfo on every ASYNC_DONE, e.g. after each seek),
+while a list with the same number of streams but different
+language/codec was reported as unchanged and never refreshed.
+
+Verified with the real eServiceMP3::audioStream struct: of three
+scenarios (unchanged / same count but different content / different
+count) the old expression decides two wrongly, the new one none.
+
+Behavioural note: evUpdatedInfo is no longer emitted on every
+ASYNC_DONE, only when the stream lists really change.
+---
+ servicemp3/servicemp3.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/servicemp3/servicemp3.cpp b/servicemp3/servicemp3.cpp
+index 8ba703c..0c2a92a 100644
+--- a/servicemp3/servicemp3.cpp
++++ b/servicemp3/servicemp3.cpp
+@@ -2227,9 +2227,9 @@ void eServiceMP3::gstBusCall(GstMessage *msg)
+ 				subtitleStreams_temp.push_back(subs);
+ 			}
+ 
+-			bool hasChanges = m_audioStreams.size() != audioStreams_temp.size() || std::equal(m_audioStreams.begin(), m_audioStreams.end(), audioStreams_temp.begin());
++			bool hasChanges = m_audioStreams.size() != audioStreams_temp.size() || !std::equal(m_audioStreams.begin(), m_audioStreams.end(), audioStreams_temp.begin());
+ 			if (!hasChanges)
+-				hasChanges = m_subtitleStreams.size() != subtitleStreams_temp.size() || std::equal(m_subtitleStreams.begin(), m_subtitleStreams.end(), subtitleStreams_temp.begin());
++				hasChanges = m_subtitleStreams.size() != subtitleStreams_temp.size() || !std::equal(m_subtitleStreams.begin(), m_subtitleStreams.end(), subtitleStreams_temp.begin());
+ 
+ 			if (hasChanges)
+ 			{
+-- 
+2.43.0
+
